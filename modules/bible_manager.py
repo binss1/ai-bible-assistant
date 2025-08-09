@@ -139,7 +139,15 @@ class BibleManager:
         # 메모리 사용량 추적
         self._initial_memory = MemoryManager.get_memory_usage()
         
-        logger.info("BibleManager 초기화 완료")
+        logger.info("BibleManager 초기화 시작")
+        
+        # 성경 데이터 자동 로딩
+        try:
+            self.load_embeddings()
+            logger.info("BibleManager 초기화 완료")
+        except Exception as e:
+            logger.error(f"BibleManager 초기화 중 오류: {e}")
+            # 실패해도 인스턴스는 생성되도록 함
     
     def load_embeddings(self) -> bool:
         """
@@ -164,13 +172,18 @@ class BibleManager:
             
             # URL에서 다운로드가 필요한 경우
             if source.startswith('http'):
-                local_path = config.BIBLE_EMBEDDINGS_PATH
-                if not os.path.exists(local_path):
-                    logger.info(f"임베딩 파일 다운로드: {source}")
-                    if not FileDownloader.download_file(source, local_path):
-                        logger.error("임베딩 파일 다운로드 실패")
-                        return False
-                source = local_path
+                # 다중 URL 처리
+                if ',' in source:
+                    logger.info("다중 URL 감지됨 - 병합 처리")
+                    return self._load_multiple_urls(source.split(','))
+                else:
+                    local_path = config.BIBLE_EMBEDDINGS_PATH
+                    if not os.path.exists(local_path):
+                        logger.info(f"임베딩 파일 다운로드: {source}")
+                        if not FileDownloader.download_file(source, local_path):
+                            logger.error("임베딩 파일 다운로드 실패")
+                            return False
+                    source = local_path
             
             # JSON 파일 로드
             logger.info(f"성경 임베딩 로드 시작: {source}")
@@ -191,7 +204,86 @@ class BibleManager:
                 logger.error("지원하지 않는 데이터 형식")
                 return False
             
-            # 구절 데이터 파싱
+            # 공통 데이터 처리 메서드 사용
+            return self._process_verses_data(verses_data)
+            
+        except Exception as e:
+            logger.error(f"임베딩 로드 오류: {str(e)}")
+            return False
+    
+    def _load_multiple_urls(self, urls: List[str]) -> bool:
+        """
+        다중 URL에서 데이터를 로드하고 병합합니다.
+        
+        Args:
+            urls: 다운로드할 URL 리스트
+            
+        Returns:
+            bool: 로드 성공 여부
+        """
+        try:
+            logger.info(f"{len(urls)}개의 파일을 병합 로드합니다")
+            
+            all_verses_data = []
+            
+            for i, url in enumerate(urls):
+                url = url.strip()
+                if not url:
+                    continue
+                    
+                try:
+                    logger.info(f"파일 {i+1}/{len(urls)} 다운로드: {url}")
+                    
+                    response = requests.get(url, timeout=300)
+                    response.raise_for_status()
+                    
+                    # gzip 압축 해제
+                    if url.endswith('.gz'):
+                        import gzip
+                        content = gzip.decompress(response.content)
+                    else:
+                        content = response.content
+                    
+                    data = json.loads(content)
+                    
+                    if isinstance(data, list):
+                        all_verses_data.extend(data)
+                        logger.info(f"파일 {i+1} 로드 완료: {len(data)}개 구절")
+                    elif isinstance(data, dict) and 'verses' in data:
+                        all_verses_data.extend(data['verses'])
+                        logger.info(f"파일 {i+1} 로드 완료: {len(data['verses'])}개 구절")
+                    
+                    # 메모리 정리
+                    del response, content, data
+                    MemoryManager.force_gc()
+                    
+                except Exception as e:
+                    logger.error(f"파일 {i+1} 다운로드 실패: {e}")
+                    continue
+            
+            if not all_verses_data:
+                logger.error("유효한 데이터를 찾을 수 없음")
+                return False
+            
+            # 벑합된 데이터 처리
+            return self._process_verses_data(all_verses_data)
+            
+        except Exception as e:
+            logger.error(f"다중 URL 로드 오류: {e}")
+            return False
+    
+    def _process_verses_data(self, verses_data: List[Dict]) -> bool:
+        """
+        구절 데이터를 처리합니다.
+        
+        Args:
+            verses_data: 구절 데이터 리스트
+            
+        Returns:
+            bool: 처리 성공 여부
+        """
+        try:
+            self.verses = []
             embeddings_list = []
             
             for item in verses_data:
@@ -204,13 +296,15 @@ class BibleManager:
                     verse = item.get('verse', 0)
                     embedding = item.get('embedding', [])
                     
-                    if not text or not embedding:
+                    if not text:
                         continue
                     
                     bible_verse = BibleVerse(verse_id, text, book, chapter, verse, embedding)
                     self.verses.append(bible_verse)
-                    embeddings_list.append(embedding)
                     
+                    if embedding:
+                        embeddings_list.append(embedding)
+                        
                 except Exception as e:
                     logger.warning(f"구절 데이터 파싱 오류: {str(e)}")
                     continue
@@ -220,10 +314,11 @@ class BibleManager:
                 return False
             
             # 임베딩 매트릭스 생성
-            self.embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
+            if embeddings_list:
+                self.embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
+                logger.info(f"임베딩 차원: {self.embeddings_matrix.shape[1]}")
             
             logger.info(f"성경 구절 로드 완료: {len(self.verses)}개 구절")
-            logger.info(f"임베딩 차원: {self.embeddings_matrix.shape[1]}")
             
             # 메모리 사용량 체크
             current_memory = MemoryManager.get_memory_usage()
@@ -238,7 +333,7 @@ class BibleManager:
             return True
             
         except Exception as e:
-            logger.error(f"임베딩 로드 오류: {str(e)}")
+            logger.error(f"구절 데이터 처리 오류: {e}")
             return False
     
     def search_verses(self, query_text: str, query_embedding: Optional[List[float]] = None, 
