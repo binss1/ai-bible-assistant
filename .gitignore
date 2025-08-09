@@ -1,0 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 환경변수 및 설정
+.env
+.env.local
+.env.production
+config.local.py
+
+# 로그 파일
+*.log
+logs/
+app.log
+
+# 데이터베이스
+*.db
+*.sqlite
+*.sqlite3
+
+# 임시 파일
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+
+# IDE 설정
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# 백업 파일
+*.bak
+*.backup
+backups/
+
+# 개발 도구
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+.pytest_cache/
+cover/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# 개인 파일
+personal/
+private/
+test_data/
+
+# 대용량 파일 (GitHub 제한)
+*.json.gz
+*.zip
+*.tar.gz
+bible_embeddings.json
+
+# 배포 관련
+.railway/
+railway.json
