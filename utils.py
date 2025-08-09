@@ -345,7 +345,7 @@ class FileDownloader:
     @staticmethod
     def load_json_file(file_path: str) -> Optional[Any]:
         """
-        JSON 파일을 로드합니다 (gzip 압축 지원).
+        JSON 파일을 로드합니다 (gzip 압축 자동 감지).
         
         Args:
             file_path: 파일 경로
@@ -357,12 +357,20 @@ class FileDownloader:
             import gzip
             import json
             
-            if file_path.endswith('.gz'):
-                with gzip.open(file_path, 'rt', encoding='utf-8') as f:
-                    data = json.load(f)
-            else:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+            # 파일 내용을 읽어서 gzip 여부 자동 감지
+            with open(file_path, 'rb') as f:
+                # 처음 2바이트로 gzip 매직 넘버 확인
+                magic_number = f.read(2)
+                f.seek(0)  # 파일 포인터를 처음으로 되돌리기
+                
+                if magic_number == b'\x1f\x8b':  # gzip 매직 넘버
+                    logger.info(f"gzip 압축 파일 감지: {file_path}")
+                    with gzip.open(file_path, 'rt', encoding='utf-8') as gz_f:
+                        data = json.load(gz_f)
+                else:
+                    logger.info(f"일반 JSON 파일: {file_path}")
+                    with open(file_path, 'r', encoding='utf-8') as txt_f:
+                        data = json.load(txt_f)
             
             logger.info(f"JSON 파일 로드 성공: {file_path}")
             return data
