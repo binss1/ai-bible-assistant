@@ -105,32 +105,54 @@ def initialize_services():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """헬스체크 엔드포인트"""
-    memory_usage = MemoryManager.get_memory_usage()
-    
-    # 성경 데이터 로드 상태 확인
-    bible_loaded = bible_manager.is_loaded
-    
-    # 전체 서비스 상태 결정
-    is_healthy = bible_loaded and (memory_usage < config.MAX_MEMORY_MB * 0.9)
-    
-    health_data = {
-        'status': 'healthy' if is_healthy else 'unhealthy',
-        'timestamp': DateTimeHelper.get_kst_now().isoformat(),
-        'memory_usage_mb': round(memory_usage, 1),
-        'memory_limit_mb': config.MAX_MEMORY_MB,
-        'uptime_seconds': int((DateTimeHelper.get_kst_now() - app_status['startup_time']).total_seconds()),
-        'bible_loaded': bible_loaded,
-        'total_requests': app_status['total_requests'],
-        'app_initialized': app_status.get('is_healthy', False)
-    }
-    
-    # 디버깅 정보 추가
-    if bible_loaded:
-        health_data['bible_verses_count'] = len(bible_manager.verses)
-    
-    status_code = 200 if is_healthy else 503
-    return jsonify(health_data), status_code
+    """헬스체크 엔드포인트 - 실시간 상태 확인"""
+    try:
+        memory_usage = MemoryManager.get_memory_usage()
+        
+        # 실시간으로 성경 데이터 상태 확인
+        bible_loaded = hasattr(bible_manager, 'verses') and len(bible_manager.verses) > 0
+        
+        # 전체 서비스 상태 결정
+        is_healthy = bible_loaded and (memory_usage < config.MAX_MEMORY_MB)
+        
+        health_data = {
+            'status': 'healthy' if is_healthy else 'unhealthy',
+            'timestamp': DateTimeHelper.get_kst_now().isoformat(),
+            'memory_usage_mb': round(memory_usage, 1),
+            'memory_limit_mb': config.MAX_MEMORY_MB,
+            'uptime_seconds': int((DateTimeHelper.get_kst_now() - app_status['startup_time']).total_seconds()),
+            'bible_loaded': bible_loaded,
+            'total_requests': app_status['total_requests'],
+            'app_initialized': app_status.get('is_healthy', False)
+        }
+        
+        # 디버깅 정보 추가
+        if bible_loaded:
+            health_data['bible_verses_count'] = len(bible_manager.verses)
+            health_data['bible_memory_mb'] = round(bible_manager.embeddings_matrix.nbytes / 1024 / 1024, 1) if hasattr(bible_manager, 'embeddings_matrix') and bible_manager.embeddings_matrix is not None else 0
+        else:
+            # 성경 데이터가 없으면 지금 당장 로드 시도
+            logger.warning("헬스체크: 성경 데이터가 로드되지 않음 - 재로드 시도")
+            try:
+                if bible_manager.load_embeddings():
+                    health_data['bible_loaded'] = True
+                    health_data['bible_verses_count'] = len(bible_manager.verses)
+                    health_data['emergency_reload'] = True
+                    is_healthy = True
+                    health_data['status'] = 'healthy'
+            except Exception as e:
+                health_data['reload_error'] = str(e)
+        
+        status_code = 200 if is_healthy else 503
+        return jsonify(health_data), status_code
+        
+    except Exception as e:
+        logger.error(f"헬스체크 오류: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': DateTimeHelper.get_kst_now().isoformat()
+        }), 500
 
 @app.route('/status', methods=['GET'])
 def status_check():
