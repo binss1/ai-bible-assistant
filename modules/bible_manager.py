@@ -8,7 +8,7 @@ import os
 import json
 import numpy as np
 import logging
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple, Union
 try:
     from sklearn.metrics.pairwise import cosine_similarity
 except ImportError:
