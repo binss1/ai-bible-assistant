@@ -294,3 +294,79 @@ def safe_execute(func, default_return=None, log_errors=True):
         if log_errors:
             logger.error(f"함수 실행 오류: {str(e)}")
         return default_return
+
+class FileDownloader:
+    """파일 다운로드 관리 클래스"""
+    
+    @staticmethod
+    def download_file(url: str, local_path: str, max_retries: int = 3) -> bool:
+        """
+        URL에서 파일을 다운로드합니다.
+        
+        Args:
+            url: 다운로드할 URL
+            local_path: 저장할 로컬 경로
+            max_retries: 최대 재시도 횟수
+            
+        Returns:
+            bool: 다운로드 성공 여부
+        """
+        import requests
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"파일 다운로드 시도 {attempt + 1}/{max_retries}: {url}")
+                
+                response = requests.get(url, stream=True, timeout=30)
+                response.raise_for_status()
+                
+                # 파일 크기 체크
+                content_length = response.headers.get('content-length')
+                if content_length:
+                    file_size_mb = int(content_length) / 1024 / 1024
+                    logger.info(f"파일 크기: {file_size_mb:.2f} MB")
+                
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                
+                with open(local_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                
+                logger.info(f"파일 다운로드 완료: {local_path}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"다운로드 실패 (시도 {attempt + 1}): {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # 지수 백오프
+        
+        return False
+    
+    @staticmethod
+    def load_json_file(file_path: str) -> Optional[Any]:
+        """
+        JSON 파일을 로드합니다 (gzip 압축 지원).
+        
+        Args:
+            file_path: 파일 경로
+            
+        Returns:
+            로드된 데이터 또는 None
+        """
+        try:
+            import gzip
+            import json
+            
+            if file_path.endswith('.gz'):
+                with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+                    data = json.load(f)
+            else:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            
+            logger.info(f"JSON 파일 로드 성공: {file_path}")
+            return data
+            
+        except Exception as e:
+            logger.error(f"JSON 파일 로드 실패 ({file_path}): {e}")
+            return None
