@@ -47,7 +47,7 @@ class Config:
     SESSION_TIMEOUT_HOURS = int(os.getenv('SESSION_TIMEOUT_HOURS', 24))
     
     # 메모리 관리 설정 (Railway 512MB 제한)
-    MAX_MEMORY_MB = int(os.getenv('MAX_MEMORY_MB', 400))  # 안전 여유분
+    MAX_MEMORY_MB = int(os.getenv('MAX_MEMORY_MB', 410))  # 410MB로 여유분 증가
     CACHE_SIZE_LIMIT = int(os.getenv('CACHE_SIZE_LIMIT', 100))
     
     # 로깅 설정
