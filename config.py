@@ -33,6 +33,7 @@ class Config:
     # 성경 임베딩 파일 설정
     BIBLE_EMBEDDINGS_URL = os.getenv('BIBLE_EMBEDDINGS_URL')
     BIBLE_EMBEDDINGS_PATH = os.path.join(BASE_DIR, 'bible_embeddings.json')
+    BIBLE_EMBEDDINGS_LOCAL = os.path.join(BASE_DIR, 'bible_embeddings_local.json.gz')  # 로컬 압축 파일
     
     # 카카오 챗봇 설정
     KAKAO_WEBHOOK_URL = '/webhook'
@@ -106,12 +107,16 @@ class Config:
 
     @classmethod
     def get_bible_embeddings_source(cls):
-        """성경 임베딩 파일 소스 결정"""
-        # 로컬 파일이 있으면 우선 사용
+        """성경 임베딩 파일 소스 결정 (로컬 파일 최우선)"""
+        # 1순위: 로컬 압축 파일 (가장 신뢰성 높음)
+        if os.path.exists(cls.BIBLE_EMBEDDINGS_LOCAL):
+            return cls.BIBLE_EMBEDDINGS_LOCAL
+        
+        # 2순위: 로컬 비압축 파일
         if os.path.exists(cls.BIBLE_EMBEDDINGS_PATH):
             return cls.BIBLE_EMBEDDINGS_PATH
         
-        # URL이 설정되어 있으면 다운로드
+        # 3순위: 원격 URL
         if cls.BIBLE_EMBEDDINGS_URL:
             return cls.BIBLE_EMBEDDINGS_URL
         

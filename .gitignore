@@ -84,11 +84,11 @@ personal/
 private/
 test_data/
 
-# 대용량 파일 (GitHub 제한)
-*.json.gz
+# 대용량 파일 (GitHub 제한) - 필수 파일은 예외
+# *.json.gz  # 주석 처리로 압축 파일 포함 허용
 *.zip
 *.tar.gz
-bible_embeddings.json
+bible_embeddings.json  # 원본 비압축 파일만 제외
 
 # 배포 관련
 .railway/
