@@ -3,7 +3,7 @@ Flask==2.3.3
 Werkzeug==2.3.7
 
 # AI API 연동
-anthropic==0.34.2
+anthropic==0.40.0
 
 # 데이터베이스
 pymongo==4.6.0

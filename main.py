@@ -61,8 +61,10 @@ def initialize_services():
         logger.info("✓ 설정 유효성 검사 완료")
         
         # 2. 성경 임베딩 로드
-        logger.info("2. 성경 임베딩 데이터 로드")
-        if bible_manager.load_embeddings():
+        logger.info("2. 성경 임베딩 데이터 확인")
+        if bible_manager.is_loaded:
+            logger.info("✓ 성경 임베딩 이미 로드됨 (중복 로드 방지)")
+        elif bible_manager.load_embeddings():
             logger.info("✓ 성경 임베딩 로드 완료")
         else:
             logger.error("✗ 성경 임베딩 로드 실패")
