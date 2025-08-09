@@ -95,6 +95,7 @@ def initialize_services():
         logger.error(traceback.format_exc())
         return False
 
+# Flask 오래된 데코레이터 (중복 방지를 위해 비활성화)
 #@app.before_first_request
 #def startup():
 #    """애플리케이션 시작 시 초기화"""
@@ -105,17 +106,28 @@ def health_check():
     """헬스체크 엔드포인트"""
     memory_usage = MemoryManager.get_memory_usage()
     
+    # 성경 데이터 로드 상태 확인
+    bible_loaded = bible_manager.is_loaded
+    
+    # 전체 서비스 상태 결정
+    is_healthy = bible_loaded and (memory_usage < config.MAX_MEMORY_MB * 0.9)
+    
     health_data = {
-        'status': 'healthy' if app_status['is_healthy'] else 'unhealthy',
+        'status': 'healthy' if is_healthy else 'unhealthy',
         'timestamp': DateTimeHelper.get_kst_now().isoformat(),
         'memory_usage_mb': round(memory_usage, 1),
         'memory_limit_mb': config.MAX_MEMORY_MB,
         'uptime_seconds': int((DateTimeHelper.get_kst_now() - app_status['startup_time']).total_seconds()),
-        'bible_loaded': bible_manager.is_loaded,
-        'total_requests': app_status['total_requests']
+        'bible_loaded': bible_loaded,
+        'total_requests': app_status['total_requests'],
+        'app_initialized': app_status.get('is_healthy', False)
     }
     
-    status_code = 200 if app_status['is_healthy'] else 503
+    # 디버깅 정보 추가
+    if bible_loaded:
+        health_data['bible_verses_count'] = len(bible_manager.verses)
+    
+    status_code = 200 if is_healthy else 503
     return jsonify(health_data), status_code
 
 @app.route('/status', methods=['GET'])
@@ -396,7 +408,7 @@ def internal_error(error):
     logger.error(f"Internal server error: {str(error)}")
     return jsonify({'error': 'Internal Server Error'}), 500
 
-# 메인 실행
+# 메인 실행 (개발 환경용)
 if __name__ == '__main__':
     logger.info(f"AI Bible Assistant 서버 시작 - 포트: {config.PORT}")
     
@@ -412,3 +424,7 @@ if __name__ == '__main__':
         debug=config.DEBUG,
         threaded=True
     )
+else:
+    # Gunicorn 환경 (Railway 등)에서는 여기서 초기화
+    logger.info("Gunicorn 환경에서 AI Bible Assistant 시작")
+    initialize_services()
