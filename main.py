@@ -1,35 +1,32 @@
 # -*- coding: utf-8 -*-
 """
-AI Bible Assistant 메인 서버 (안정성 강화 최종안)
+AI Bible Assistant 메인 서버
 Flask 웹서버를 통해 카카오톡 챗봇 서비스를 제공합니다.
 """
 
 import logging
 import os
 import sys
-import traceback
-import time
 from flask import Flask, request, jsonify
+import traceback
 from typing import Dict, Any, Optional
 
 # 프로젝트 경로 추가
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# --- 모듈 임포트 ---
-# 다른 파이썬 파일에서 정의한 클래스나 함수를 가져옵니다.
-# config.py, utils.py 등이 같은 폴더에 있어야 합니다.
 from config import config
 from utils import (
-    MemoryManager, ResponseTimer, DateTimeHelper,
+    MemoryManager, ResponseTimer, DateTimeHelper, 
     global_cache, log_function_call, safe_execute
 )
+
+# 모듈 임포트
 from modules.bible_manager import bible_manager
 from modules.claude_api import claude_api
 from modules.conversation_manager import conversation_manager
 from modules.kakao_formatter import response_builder, request_parser
 
-# --- 로깅 설정 ---
-# 챗봇의 동작 상태를 파일과 콘솔에 기록합니다.
+# 로깅 설정
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -40,12 +37,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Flask 앱 초기화 ---
+# Flask 앱 초기화
 app = Flask(__name__)
-app.config['JSON_AS_ASCII'] = False  # 한글이 깨지지 않도록 설정
+app.config['JSON_AS_ASCII'] = False  # 한글 출력을 위해
 
-# --- 전역 상태 변수 ---
-# 앱의 전반적인 상태를 추적합니다.
+# 전역 상태 추적
 app_status = {
     'startup_time': DateTimeHelper.get_kst_now(),
     'total_requests': 0,
@@ -54,7 +50,7 @@ app_status = {
     'is_healthy': False
 }
 
-
+# 강제 초기화 함수
 def ensure_bible_loaded():
     """성경 데이터가 로드되어 있는지 확인하고, 없으면 강제 로드"""
     try:
@@ -68,13 +64,16 @@ def ensure_bible_loaded():
         return False
 
 def initialize_services():
-    """서비스 시작 시 필요한 모든 것을 초기화합니다."""
+    """서비스 초기화"""
     logger.info("=== AI Bible Assistant 서비스 초기화 시작 ===")
+    
     try:
+        # 1. 설정 유효성 검사
         logger.info("1. 설정 유효성 검사")
         config.validate_config()
         logger.info("✓ 설정 유효성 검사 완료")
-
+        
+        # 2. 성경 임베딩 로드
         logger.info("2. 성경 임베딩 데이터 확인")
         if bible_manager.is_loaded:
             logger.info("✓ 성경 임베딩 이미 로드됨 (중복 로드 방지)")
@@ -83,42 +82,56 @@ def initialize_services():
         else:
             logger.error("✗ 성경 임베딩 로드 실패")
             return False
-
+        
+        # 3. Claude API 연결 테스트
         logger.info("3. Claude API 연결 테스트")
         if claude_api.test_connection():
             logger.info("✓ Claude API 연결 성공")
         else:
             logger.warning("⚠ Claude API 연결 실패 (서비스는 계속 실행)")
-
+        
+        # 4. MongoDB 연결 테스트
         logger.info("4. MongoDB 연결 테스트")
         if conversation_manager.test_connection():
             logger.info("✓ MongoDB 연결 성공")
         else:
             logger.warning("⚠ MongoDB 연결 실패 (오프라인 모드로 실행)")
-
+        
+        # 5. 메모리 상태 확인
         memory_usage = MemoryManager.get_memory_usage()
         logger.info(f"5. 현재 메모리 사용량: {memory_usage:.1f}MB")
-
+        
         app_status['is_healthy'] = True
         logger.info("=== 서비스 초기화 완료 ===")
         return True
+        
     except Exception as e:
         logger.error(f"서비스 초기화 실패: {str(e)}")
         logger.error(traceback.format_exc())
         return False
 
+# Flask 오래된 데코레이터 (중복 방지를 위해 비활성화)
+#@app.before_first_request
+#def startup():
+#    """애플리케이션 시작 시 초기화"""
+#    initialize_services()
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """서버가 정상적으로 동작하는지 확인하는 엔드포인트"""
+    """헬스체크 엔드포인트 - 강제 초기화 포함"""
     try:
         memory_usage = MemoryManager.get_memory_usage()
+        
+        # 강제로 성경 데이터 로드 보장
         bible_loaded = ensure_bible_loaded()
+        
+        # 전체 서비스 상태 결정
         is_healthy = bible_loaded and (memory_usage < config.MAX_MEMORY_MB)
-
+        
+        # 성공적으로 로드되면 앱 초기화 상태도 업데이트
         if is_healthy:
             app_status['is_healthy'] = True
-
+        
         health_data = {
             'status': 'healthy' if is_healthy else 'unhealthy',
             'timestamp': DateTimeHelper.get_kst_now().isoformat(),
@@ -126,112 +139,194 @@ def health_check():
             'memory_limit_mb': config.MAX_MEMORY_MB,
             'uptime_seconds': int((DateTimeHelper.get_kst_now() - app_status['startup_time']).total_seconds()),
             'bible_loaded': bible_loaded,
+            'total_requests': app_status['total_requests'],
+            'app_initialized': app_status.get('is_healthy', False)
         }
+        
+        # 디버깅 정보 추가
+        if bible_loaded:
+            health_data['bible_verses_count'] = len(bible_manager.verses)
+            if hasattr(bible_manager, 'embeddings_matrix') and bible_manager.embeddings_matrix is not None:
+                health_data['bible_memory_mb'] = round(bible_manager.embeddings_matrix.nbytes / 1024 / 1024, 1)
+            # 전체 구절에서 성경 책 수 정확히 계산
+            unique_books = set()
+            for verse in bible_manager.verses:
+                if hasattr(verse, 'book') and verse.book:
+                    unique_books.add(verse.book)
+            health_data['bible_books'] = len(unique_books)
+        else:
+            health_data['error'] = '성경 데이터 로드 실패'
+        
         status_code = 200 if is_healthy else 503
         return jsonify(health_data), status_code
+        
     except Exception as e:
         logger.error(f"헬스체크 오류: {e}")
-        return jsonify({'status': 'error', 'error': str(e)}), 500
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': DateTimeHelper.get_kst_now().isoformat()
+        }), 500
 
+@app.route('/status', methods=['GET'])
+def status_check():
+    """상세 상태 정보"""
+    try:
+        status_data = {
+            'app_status': app_status,
+            'bible_stats': bible_manager.get_stats(),
+            'claude_stats': claude_api.get_stats(),
+            'conversation_stats': conversation_manager.get_global_statistics(),
+            'cache_stats': global_cache.get_stats(),
+            'config': {
+                'model': config.CLAUDE_MODEL,
+                'max_tokens': config.CLAUDE_MAX_TOKENS,
+                'similarity_threshold': config.SIMILARITY_THRESHOLD,
+                'categories': config.CATEGORIES
+            }
+        }
+        
+        return jsonify(status_data), 200
+        
+    except Exception as e:
+        logger.error(f"상태 조회 오류: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/webhook', methods=['POST'])
 @ResponseTimer.timeout_handler(config.KAKAO_TIMEOUT)
 def webhook():
-    """카카오톡 챗봇의 모든 메시지를 받는 메인 엔드포인트"""
+    """카카오톡 챗봇 웹훅 엔드포인트"""
     app_status['total_requests'] += 1
-    request_time = time.time()
-
+    
     try:
+        # 성경 데이터 로드 보장
         if not ensure_bible_loaded():
-            raise RuntimeError("성경 데이터 로드에 실패하여 요청을 처리할 수 없습니다.")
-
+            logger.error("웹훅: 성경 데이터 로드 실패")
+            app_status['error_responses'] += 1
+            return jsonify(response_builder.create_error_response()), 500
+        # 요청 데이터 파싱
         request_data = request.get_json()
-        if not request_data or not request_parser.is_valid_request(request_data):
-            raise ValueError("유효하지 않은 요청 데이터 형식입니다.")
-
+        
+        if not request_data:
+            logger.error("빈 요청 데이터")
+            app_status['error_responses'] += 1
+            return jsonify(response_builder.create_error_response()), 400
+        
+        # 요청 유효성 검사
+        if not request_parser.is_valid_request(request_data):
+            logger.error("유효하지 않은 요청")
+            app_status['error_responses'] += 1
+            return jsonify(response_builder.create_error_response()), 400
+        
+        # 사용자 정보 추출
         parsed_request = request_parser.parse_user_request(request_data)
         user_id = parsed_request['user_id']
         user_message = parsed_request['user_message']
-        logger.info(f"사용자 요청 수신: {user_id[:8]}*** -> '{user_message[:50]}...'")
-
-    except Exception as e:
-        logger.error(f"웹훅 요청 전처리 오류: {str(e)}\n{traceback.format_exc()}")
-        app_status['error_responses'] += 1
-        return jsonify(response_builder.create_error_response("요청을 처리하는 중 문제가 발생했습니다.")), 200
-
-    try:
+        
+        logger.info(f"사용자 요청: {user_id[:8]}*** -> {user_message[:50]}...")
+        
+        # 메모리 상태 체크
         if MemoryManager.is_memory_critical():
             logger.warning("메모리 부족 - 가비지 컬렉션 실행")
             MemoryManager.force_gc()
-
+        
+        # 챗봇 응답 처리
         response = process_chatbot_request(user_id, user_message, parsed_request)
+        
         app_status['successful_responses'] += 1
-
+        return jsonify(response), 200
+        
     except Exception as e:
-        logger.error(f"!!! CRITICAL: process_chatbot_request 처리 중 예측하지 못한 오류 발생 !!!")
-        logger.error(f"사용자: {user_id[:8]}***, 메시지: '{user_message}'")
-        logger.error(f"{str(e)}\n{traceback.format_exc()}")
+        logger.error(f"웹훅 처리 오류: {str(e)}")
+        logger.error(traceback.format_exc())
+        
         app_status['error_responses'] += 1
-        response = response_builder.create_error_response(
-            "죄송합니다, 답변을 준비하는 중 예상치 못한 문제가 발생했어요. 잠시 후 다시 시도해주세요."
-        )
-
-    response_time = time.time() - request_time
-    logger.info(f"응답 생성 완료. 총 소요시간: {response_time:.2f}초")
-
-    if response_time > 4.5:
-         logger.warning(f"응답 시간이 4.5초를 초과했습니다. 타임아웃 위험이 높습니다. (소요시간: {response_time:.2f}초)")
-
-    return jsonify(response), 200
-
+        
+        # 에러 응답 반환
+        error_response = response_builder.create_error_response()
+        return jsonify(error_response), 500
 
 def process_chatbot_request(user_id: str, user_message: str, request_info: Dict) -> Dict[str, Any]:
-    """사용자 메시지를 받아 적절한 답변을 생성하는 핵심 로직"""
-    user_session = conversation_manager.get_user_session(user_id)
-
-    special_response = handle_special_commands(user_message, user_session)
-    if special_response:
-        response = special_response
-    else:
-        intent = classify_intent(user_message, user_session)
-        logger.info(f"메시지 의도 분류 결과: {intent}")
-
-        if intent == 'greeting':
-            response = handle_greeting(user_message, user_session)
-        elif intent == 'counseling_start':
-            response = handle_counseling_start()
-        elif intent == 'counseling_detail':
+    """
+    챗봇 요청 처리 메인 로직
+    
+    Args:
+        user_id: 사용자 ID
+        user_message: 사용자 메시지
+        request_info: 요청 정보
+        
+    Returns:
+        Dict: 카카오톡 응답 데이터
+    """
+    log_function_call("process_chatbot_request", 
+                     user_id=user_id[:8] + "***", 
+                     message_length=len(user_message))
+    
+    try:
+        # 1. 사용자 세션 로드
+        user_session = conversation_manager.get_user_session(user_id)
+        
+        # 2. 특별한 명령어 처리
+        special_response = handle_special_commands(user_message, user_session)
+        if special_response:
+            return special_response
+        
+        # 3. 메시지 타입 판단
+        message_type = classify_message_type(user_message, user_session)
+        
+        if message_type == 'greeting':
+            response = handle_greeting(user_message)
+        elif message_type == 'counseling':
             response = handle_counseling_request(user_message, user_session)
         else:
-            response = handle_fallback(user_message, user_session)
+            response = handle_fallback(user_message)
+        
+        # 4. 대화 기록 저장
+        user_session.add_message('user', user_message)
+        
+        # AI 응답이 있으면 저장
+        if response and 'template' in response and 'outputs' in response['template']:
+            ai_response = extract_ai_response(response)
+            if ai_response:
+                user_session.add_message('assistant', ai_response)
+        
+        # 세션 저장
+        conversation_manager.save_user_session(user_session)
+        
+        # 상호작용 로그
+        conversation_manager.log_interaction(
+            user_id, 
+            'message',
+            {
+                'message_type': message_type,
+                'message_length': len(user_message),
+                'categories': user_session.user_categories
+            }
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"챗봇 요청 처리 오류: {str(e)}")
+        return response_builder.create_error_response()
 
-    user_session.add_message('user', user_message)
-    ai_response_text = extract_ai_response(response)
-    if ai_response_text:
-        user_session.add_message('assistant', ai_response_text)
-    conversation_manager.save_user_session(user_session)
-
-    return response
-
-
-def classify_intent(user_message: str, user_session) -> str:
-    """사용자 메시지의 의도를 파악 (인사, 상담 시작, 상담 내용 등)"""
-    message_norm = ''.join(filter(str.isalnum, user_message.lower()))
-
-    greetings = ['안녕', '안녕하세요', '하이', '헬로', 'hi', 'hello']
-    if message_norm in greetings and len(user_session.conversation_history) < 2:
+def classify_message_type(user_message: str, user_session) -> str:
+    """메시지 타입 분류"""
+    message_lower = user_message.lower().strip()
+    
+    # 인사말 패턴
+    greetings = ['안녕', '하이', '안녕하세요', '처음', '시작', 'hi', 'hello']
+    if any(greeting in message_lower for greeting in greetings) and len(user_session.conversation_history) <= 1:
         return 'greeting'
-
-    counseling_starters = ['고민있어', '고민이있습니다', '상담좀', '이야기좀해', '이야기좀할까']
-    if any(starter in message_norm for starter in counseling_starters) and len(message_norm) < 15:
-        return 'counseling_start'
-
-    return 'counseling_detail'
-
+    
+    # 상담 요청 패턴 (기본값)
+    return 'counseling'
 
 def handle_special_commands(user_message: str, user_session) -> Optional[Dict]:
-    """'도움말', '기도 요청' 등 특별한 명령어를 처리"""
+    """특별한 명령어 처리"""
     message_lower = user_message.lower().strip()
+    
+    # 도움말 요청
     if message_lower in ['도움말', 'help', '도움', '사용법']:
         help_text = """🙏 AI Bible Assistant 사용법
 
@@ -247,106 +342,106 @@ def handle_special_commands(user_message: str, user_session) -> Optional[Dict]:
 "기도 부탁드려요"
 
 📖 언제든 편안하게 말씀해 주세요!"""
+        
         return response_builder.create_simple_text(help_text)
-
+    
+    # 기도 요청
     if '기도' in message_lower and any(word in message_lower for word in ['부탁', '해주', '드려', '요청']):
-        return handle_prayer_request(user_message)
-
+        prayer_response = handle_prayer_request(user_message)
+        return prayer_response
+    
     return None
 
-
-def handle_greeting(user_message: str, user_session) -> Dict:
-    """인사 메시지에 대한 답변 생성"""
-    if len(user_session.conversation_history) == 0:
-        return response_builder.create_welcome_response()
-    else:
-        return response_builder.create_simple_text("네, 안녕하세요! 오늘은 어떤 이야기를 나누고 싶으신가요?")
-
-
-def handle_counseling_start() -> Dict:
-    """'고민있어요' 와 같은 간단한 상담 시작 메시지에 대한 답변 생성"""
-    return response_builder.create_simple_text("네, 어떤 고민이 있으신가요? 편안하게 말씀해주세요. 제가 듣고 함께 기도하며 돕겠습니다.")
-
+def handle_greeting(user_message: str) -> Dict:
+    """인사 메시지 처리"""
+    return response_builder.create_welcome_response()
 
 def handle_counseling_request(user_message: str, user_session) -> Dict:
-    """구체적인 상담 내용에 대해 성경 검색과 AI 답변을 생성"""
+    """상담 요청 처리"""
     try:
-        logger.info("상담 요청 처리 시작...")
-        logger.info("-> 성경 구절 검색 중...")
-        bible_verses = bible_manager.search_verses(user_message, top_k=5)
+        # 1. 고민 카테고리 분류
+        categories = bible_manager.classify_concern(user_message)
+        category_names = [cat[0] for cat in categories[:3] if cat[1] > 1.0]  # 높은 점수만
+        
+        # 사용자 카테고리 업데이트
+        if category_names:
+            user_session.update_categories(category_names)
+        
+        # 2. 관련 성경 구절 검색
+        bible_verses = bible_manager.search_verses(user_message, top_k=config.MAX_BIBLE_RESULTS)
+        
         if not bible_verses:
-            logger.warning(f"관련 구절 없음. 인기 구절로 대체합니다.")
-            categories = bible_manager.classify_concern(user_message)
-            top_category = categories[0][0] if categories else None
-            bible_verses = bible_manager.get_popular_verses(category=top_category, count=3)
-        logger.info(f"-> 구절 검색 완료. {len(bible_verses)}개 구절 발견.")
-
+            # 인기 구절로 대체
+            bible_verses = bible_manager.get_popular_verses(
+                category=category_names[0] if category_names else None,
+                count=3
+            )
+        
+        # 3. AI 상담 응답 생성
         verse_dicts = [verse.to_dict() for verse in bible_verses]
-        conversation_history = user_session.get_recent_messages(6)
-
-        logger.info("-> Claude API 호출 중...")
+        conversation_history = user_session.get_recent_messages(4)
+        
         ai_response = claude_api.generate_counseling_response(
             user_message=user_message,
             bible_verses=verse_dicts,
             conversation_history=conversation_history,
-            user_categories=[]
+            user_categories=category_names
         )
-        logger.info("-> Claude API 응답 수신 완료.")
+        
+        if not ai_response:
+            # AI 응답 실패시 기본 응답
+            ai_response = f"""🙏 {user_message}로 고민하고 계시는군요. 
 
-        if not ai_response or len(ai_response.strip()) < 10:
-            raise ValueError("Claude API가 유효한 응답을 생성하지 못했습니다.")
+이런 상황에서 하나님의 말씀을 통해 위로를 받으시기 바랍니다. 모든 어려움 속에서도 하나님께서 함께하시며, 가장 좋은 길로 인도해 주실 것입니다.
 
-        return response_builder.create_counseling_response(
+기도와 함께 지혜를 구하시며, 필요하다면 믿을 만한 분들과 상의해 보시기 바랍니다."""
+        
+        # 4. 포맷된 응답 생성
+        response = response_builder.create_counseling_response(
             ai_response=ai_response,
             bible_verses=verse_dicts,
-            show_references=len(verse_dicts) > 0
+            show_references=len(bible_verses) > 0
         )
+        
+        return response
+        
     except Exception as e:
-        logger.error(f"!!! handle_counseling_request 처리 중 오류 발생 !!!")
-        logger.error(f"{str(e)}\n{traceback.format_exc()}")
-        return response_builder.create_error_response(
-            "죄송합니다, 질문을 이해하고 답변을 준비하는 데 시간이 조금 더 필요할 것 같아요. 조금 더 구체적으로 질문해주시거나, 잠시 후 다시 시도해주시겠어요?"
-        )
-
+        logger.error(f"상담 요청 처리 오류: {str(e)}")
+        return response_builder.create_error_response()
 
 def handle_prayer_request(user_message: str) -> Dict:
-    """기도 요청에 대한 답변 생성"""
+    """기도 요청 처리"""
     prayer_text = """🙏 기도 요청을 받았습니다.
 
-하나님께서 당신의 마음을 아시고, 가장 필요한 것을 채워주시기를 기도합니다.
+하나님께서 당신의 마음을 아시고, 가장 필요한 것을 채워주시기를 기도합니다. 
 
 "너희 중에 두세 사람이 내 이름으로 모인 곳에는 나도 그들 중에 있느니라" (마태복음 18:20)
 
 하나님의 평안과 은혜가 함께하시기를 축복합니다. 🕊️"""
+    
     return response_builder.create_simple_text(prayer_text)
 
-
-def handle_fallback(user_message: str, user_session) -> Dict:
-    """의도를 파악하기 어려운 메시지에 대한 기본 답변 생성"""
-    history = user_session.get_recent_messages(4)
-    ai_response = claude_api.generate_fallback_response(user_message, history)
-
+def handle_fallback(user_message: str) -> Dict:
+    """폴백 응답 처리"""
+    # AI 폴백 시도
+    ai_response = claude_api.generate_fallback_response(user_message)
+    
     if ai_response:
         return response_builder.create_simple_text(ai_response)
     else:
-        return response_builder.create_fallback_response()
-
+        return response_builder.create_fallback_response(user_message)
 
 def extract_ai_response(kakao_response: Dict) -> str:
-    """카카오톡 응답 JSON에서 실제 텍스트 메시지를 추출"""
+    """카카오톡 응답에서 AI 응답 텍스트 추출"""
     try:
         outputs = kakao_response.get('template', {}).get('outputs', [])
-        for output in outputs:
-            if 'simpleText' in output:
-                return output['simpleText']['text']
-            if 'basicCard' in output:
-                return output['basicCard'].get('description', '')
-    except Exception:
+        if outputs and 'simpleText' in outputs[0]:
+            return outputs[0]['simpleText']['text']
+    except:
         pass
     return ""
 
-
-# --- Flask 에러 핸들러 ---
+# 에러 핸들러
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({'error': 'Not Found'}), 404
@@ -356,17 +451,25 @@ def internal_error(error):
     logger.error(f"Internal server error: {str(error)}")
     return jsonify({'error': 'Internal Server Error'}), 500
 
-
-# --- 서버 실행 ---
+# 메인 실행 (개발 환경용)
 if __name__ == '__main__':
-    # 개발 환경에서 직접 실행할 때
     logger.info(f"AI Bible Assistant 서버 시작 - 포트: {config.PORT}")
+    
+    # 개발 환경에서는 바로 초기화
     if not initialize_services():
         logger.error("서비스 초기화 실패 - 서버 종료")
         sys.exit(1)
-    app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG, threaded=True)
+    
+    # Flask 서버 시작
+    app.run(
+        host=config.HOST,
+        port=config.PORT,
+        debug=config.DEBUG,
+        threaded=True
+    )
 else:
-    # Gunicorn과 같은 상용 서버 환경에서 실행될 때
+    # Gunicorn 환경 (Railway 등)에서는 여기서 초기화
     logger.info("Gunicorn 환경에서 AI Bible Assistant 시작")
     initialize_services()
+    # 추가로 성경 데이터 로드 보장
     ensure_bible_loaded()
