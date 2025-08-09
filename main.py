@@ -50,6 +50,19 @@ app_status = {
     'is_healthy': False
 }
 
+# 강제 초기화 함수
+def ensure_bible_loaded():
+    """성경 데이터가 로드되어 있는지 확인하고, 없으면 강제 로드"""
+    try:
+        if not hasattr(bible_manager, 'verses') or len(bible_manager.verses) == 0:
+            logger.info("성경 데이터가 없음 - 강제 로드 시작")
+            bible_manager.load_embeddings()
+            return len(bible_manager.verses) > 0
+        return True
+    except Exception as e:
+        logger.error(f"성경 데이터 강제 로드 실패: {e}")
+        return False
+
 def initialize_services():
     """서비스 초기화"""
     logger.info("=== AI Bible Assistant 서비스 초기화 시작 ===")
@@ -105,12 +118,12 @@ def initialize_services():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """헬스체크 엔드포인트 - 실시간 상태 확인"""
+    """헬스체크 엔드포인트 - 강제 초기화 포함"""
     try:
         memory_usage = MemoryManager.get_memory_usage()
         
-        # 실시간으로 성경 데이터 상태 확인
-        bible_loaded = hasattr(bible_manager, 'verses') and len(bible_manager.verses) > 0
+        # 강제로 성경 데이터 로드 보장
+        bible_loaded = ensure_bible_loaded()
         
         # 전체 서비스 상태 결정
         is_healthy = bible_loaded and (memory_usage < config.MAX_MEMORY_MB)
@@ -129,19 +142,11 @@ def health_check():
         # 디버깅 정보 추가
         if bible_loaded:
             health_data['bible_verses_count'] = len(bible_manager.verses)
-            health_data['bible_memory_mb'] = round(bible_manager.embeddings_matrix.nbytes / 1024 / 1024, 1) if hasattr(bible_manager, 'embeddings_matrix') and bible_manager.embeddings_matrix is not None else 0
+            if hasattr(bible_manager, 'embeddings_matrix') and bible_manager.embeddings_matrix is not None:
+                health_data['bible_memory_mb'] = round(bible_manager.embeddings_matrix.nbytes / 1024 / 1024, 1)
+            health_data['bible_books'] = len(set(v.book for v in bible_manager.verses[:100]))  # 첫 100개 구절에서 책 수 계산
         else:
-            # 성경 데이터가 없으면 지금 당장 로드 시도
-            logger.warning("헬스체크: 성경 데이터가 로드되지 않음 - 재로드 시도")
-            try:
-                if bible_manager.load_embeddings():
-                    health_data['bible_loaded'] = True
-                    health_data['bible_verses_count'] = len(bible_manager.verses)
-                    health_data['emergency_reload'] = True
-                    is_healthy = True
-                    health_data['status'] = 'healthy'
-            except Exception as e:
-                health_data['reload_error'] = str(e)
+            health_data['error'] = '성경 데이터 로드 실패'
         
         status_code = 200 if is_healthy else 503
         return jsonify(health_data), status_code
@@ -185,6 +190,11 @@ def webhook():
     app_status['total_requests'] += 1
     
     try:
+        # 성경 데이터 로드 보장
+        if not ensure_bible_loaded():
+            logger.error("웹훅: 성경 데이터 로드 실패")
+            app_status['error_responses'] += 1
+            return jsonify(response_builder.create_error_response()), 500
         # 요청 데이터 파싱
         request_data = request.get_json()
         
@@ -452,3 +462,5 @@ else:
     # Gunicorn 환경 (Railway 등)에서는 여기서 초기화
     logger.info("Gunicorn 환경에서 AI Bible Assistant 시작")
     initialize_services()
+    # 추가로 성경 데이터 로드 보장
+    ensure_bible_loaded()
