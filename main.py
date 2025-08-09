@@ -95,10 +95,10 @@ def initialize_services():
         logger.error(traceback.format_exc())
         return False
 
-@app.before_first_request
-def startup():
-    """애플리케이션 시작 시 초기화"""
-    initialize_services()
+#@app.before_first_request
+#def startup():
+#    """애플리케이션 시작 시 초기화"""
+#    initialize_services()
 
 @app.route('/health', methods=['GET'])
 def health_check():
