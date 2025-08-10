@@ -32,7 +32,7 @@ class Config:
     
     # 성경 임베딩 파일 설정
     BIBLE_EMBEDDINGS_URL = os.getenv('BIBLE_EMBEDDINGS_URL')
-    BIBLE_EMBEDDINGS_PATH = os.path.join(BASE_DIR, 'bible_embeddings.json')
+    BIBLE_EMBEDDINGS_PATH = os.path.join(BASE_DIR, 'bible_embeddings.json.gz')  # .gz 확장자 추가
     BIBLE_EMBEDDINGS_LOCAL = os.path.join(BASE_DIR, 'bible_embeddings_local.json.gz')  # 로컬 압축 파일
     
     # 카카오 챗봇 설정
