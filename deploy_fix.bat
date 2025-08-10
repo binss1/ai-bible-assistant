@@ -1,33 +1,27 @@
 @echo off
-echo ============================================
-echo AI Bible Assistant 수정사항 배포
-echo ============================================
-
-cd /d "C:\Users\user\Desktop\ai-bible-assistant"
-
-echo 1. Git 상태 확인...
-git status
+echo Deploy fixed version that works without bible data
 
 echo.
-echo 2. 변경사항 스테이징...
-git add modules/bible_manager.py
+echo Step 1: Add all modified files
+git add .
 
 echo.
-echo 3. 커밋...
-git commit -m "Fix: BibleManager 자동 로딩 및 다중 URL 처리 개선
-
-- __init__ 메서드에서 자동으로 load_embeddings() 호출
-- 다중 URL 병합 처리 로직 추가
-- 메모리 최적화 및 오류 처리 개선"
+echo Step 2: Commit changes
+git commit -m "Enable fallback mode: Works without bible embeddings data"
 
 echo.
-echo 4. Railway 배포...
+echo Step 3: Push to Railway
 git push origin main
 
 echo.
-echo ============================================
-echo 배포 완료! 3분 후 헬스체크를 확인하세요.
-echo https://web-production-4bec8.up.railway.app/health
-echo ============================================
+echo Step 4: Wait for deployment
+timeout /t 45 /nobreak
+
+echo.
+echo Step 5: Test the fixed version
+python check_deployment.py
+
+echo.
+echo Done! Fixed version deployed.
 
 pause

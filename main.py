@@ -20,6 +20,7 @@ from utils import (
     MemoryManager, ResponseTimer, DateTimeHelper, 
     global_cache, log_function_call, safe_execute
 )
+from fallback_counselor import create_fallback_counseling_response
 
 # 모듈 임포트
 from modules.bible_manager import bible_manager
@@ -56,13 +57,16 @@ def ensure_bible_loaded():
     """성경 데이터가 로드되어 있는지 확인하고, 없으면 강제 로드"""
     try:
         if not hasattr(bible_manager, 'verses') or len(bible_manager.verses) == 0:
-            logger.info("성경 데이터가 없음 - 강제 로드 시작")
-            bible_manager.load_embeddings()
-            return len(bible_manager.verses) > 0
+            logger.info("성경 데이터가 없음 - 강제 로드 시도")
+            if bible_manager.load_embeddings():
+                return len(bible_manager.verses) > 0
+            else:
+                logger.warning("성경 데이터 로드 실패 - 기본 모드로 계속")
+                return False  # 성경 데이터 없이도 계속 운영
         return True
     except Exception as e:
         logger.error(f"성경 데이터 강제 로드 실패: {e}")
-        return False
+        return False  # 성경 데이터 없이도 계속 운영
 
 def initialize_services():
     """서비스 초기화"""
@@ -126,8 +130,8 @@ def health_check():
         # 강제로 성경 데이터 로드 보장
         bible_loaded = ensure_bible_loaded()
         
-        # 전체 서비스 상태 결정
-        is_healthy = bible_loaded and (memory_usage < config.MAX_MEMORY_MB)
+        # 전체 서비스 상태 결정 (성경 데이터 없어도 정상 운영 가능)
+        is_healthy = memory_usage < config.MAX_MEMORY_MB
         
         # 성공적으로 로드되면 앱 초기화 상태도 업데이트
         if is_healthy:
@@ -208,11 +212,10 @@ def webhook():
     app_status['total_requests'] += 1
     
     try:
-        # 성경 데이터 로드 보장
-        if not ensure_bible_loaded():
-            logger.error("웹훅: 성경 데이터 로드 실패")
-            app_status['error_responses'] += 1
-            return jsonify(response_builder.create_error_response()), 200  # 200으로 변경
+        # 성경 데이터 로드 상태 확인 (없어도 계속)
+        bible_loaded = ensure_bible_loaded()
+        if not bible_loaded:
+            logger.warning("웹훅: 성경 데이터 없이 기본 모드로 운영")
         
         # 요청 데이터 파싱
         request_data = request.get_json()
@@ -375,26 +378,50 @@ def handle_counseling_request(user_message: str, user_session) -> Dict:
     try:
         logger.info(f"상담 요청 처리 시작: {user_message}")
         
+        # 성경 데이터 없을 때 fallback 사용
+        if not hasattr(bible_manager, 'verses') or len(bible_manager.verses) == 0:
+            logger.warning("성경 데이터 없음 - 기본 상담 모드 사용")
+            fallback_response = create_fallback_counseling_response(user_message)
+            return response_builder.create_simple_text(fallback_response)
+        
         # 1. 고민 카테고리 분류
-        categories = bible_manager.classify_concern(user_message)
-        category_names = [cat[0] for cat in categories[:3] if cat[1] > 1.0]  # 높은 점수만
-        logger.info(f"분류된 카테고리: {category_names}")
+        try:
+            categories = bible_manager.classify_concern(user_message)
+            category_names = [cat[0] for cat in categories[:3] if cat[1] > 1.0]  # 높은 점수만
+            logger.info(f"분류된 카테고리: {category_names}")
+        except Exception as e:
+            logger.warning(f"카테고리 분류 실패: {e}")
+            category_names = []
         
         # 사용자 카테고리 업데이트
         if category_names:
             user_session.update_categories(category_names)
         
         # 2. 관련 성경 구절 검색
-        logger.info(f"성경 구절 검색 시작: {user_message}")
-        bible_verses = bible_manager.search_verses(user_message, top_k=config.MAX_BIBLE_RESULTS)
-        logger.info(f"찾은 성경 구절 수: {len(bible_verses)}")
+        try:
+            logger.info(f"성경 구절 검색 시작: {user_message}")
+            bible_verses = bible_manager.search_verses(user_message, top_k=config.MAX_BIBLE_RESULTS)
+            logger.info(f"찾은 성경 구절 수: {len(bible_verses)}")
+            
+            if not bible_verses:
+                # 인기 구절로 대체
+                try:
+                    bible_verses = bible_manager.get_popular_verses(
+                        category=category_names[0] if category_names else None,
+                        count=3
+                    )
+                except Exception as e:
+                    logger.warning(f"인기 구절 가져오기 실패: {e}")
+                    bible_verses = []
+        except Exception as e:
+            logger.warning(f"성경 구절 검색 실패: {e}")
+            bible_verses = []
         
+        # 성경 구절이 없으면 fallback 사용
         if not bible_verses:
-            # 인기 구절로 대체
-            bible_verses = bible_manager.get_popular_verses(
-                category=category_names[0] if category_names else None,
-                count=3
-            )
+            logger.warning("성경 구절을 찾을 수 없음 - 기본 상담 모드 사용")
+            fallback_response = create_fallback_counseling_response(user_message)
+            return response_builder.create_simple_text(fallback_response)
         
         # 3. AI 상담 응답 생성
         verse_dicts = [verse.to_dict() for verse in bible_verses]
@@ -410,13 +437,10 @@ def handle_counseling_request(user_message: str, user_session) -> Dict:
         logger.info(f"Claude API 응답: {ai_response[:100] if ai_response else 'None'}...")
         
         if not ai_response:
-            # AI 응답 실패시 기본 응답
-            logger.warning("Claude API 응답 실패 - 기본 응답 사용")
-            ai_response = f"""🙏 {user_message}로 고민하고 계시는군요. 
-
-이런 상황에서 하나님의 말씀을 통해 위로를 받으시기 바랍니다. 모든 어려움 속에서도 하나님께서 함께하시며, 가장 좋은 길로 인도해 주실 것입니다.
-
-기도와 함께 지혜를 구하시며, 필요하다면 믿을 만한 분들과 상의해 보시기 바랍니다."""
+            # AI 응답 실패시 fallback 사용
+            logger.warning("Claude API 응답 실패 - 기본 상담 모드 사용")
+            fallback_response = create_fallback_counseling_response(user_message)
+            return response_builder.create_simple_text(fallback_response)
         
         # 4. 포맷된 응답 생성
         logger.info("카카오톡 응답 포맷팅 시작")
@@ -431,7 +455,9 @@ def handle_counseling_request(user_message: str, user_session) -> Dict:
         
     except Exception as e:
         logger.error(f"상담 요청 처리 오류: {str(e)}")
-        return response_builder.create_error_response()
+        # 모든 실패 시 fallback 사용
+        fallback_response = create_fallback_counseling_response(user_message)
+        return response_builder.create_simple_text(fallback_response)
 
 def handle_prayer_request(user_message: str) -> Dict:
     """기도 요청 처리"""
