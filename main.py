@@ -7,6 +7,7 @@ Flask 웹서버를 통해 카카오톡 챗봇 서비스를 제공합니다.
 import logging
 import os
 import sys
+import json
 from flask import Flask, request, jsonify
 import traceback
 from typing import Dict, Any, Optional
@@ -192,10 +193,18 @@ def status_check():
         logger.error(f"상태 조회 오류: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['GET', 'POST'])
 @ResponseTimer.timeout_handler(config.KAKAO_TIMEOUT)
 def webhook():
     """카카오톡 챗봇 웹훅 엔드포인트"""
+    # GET 요청 처리 (카카오톡 웹훅 테스트용)
+    if request.method == 'GET':
+        return jsonify({
+            'status': 'ok',
+            'message': 'AI Bible Assistant Webhook is working',
+            'timestamp': DateTimeHelper.get_kst_now().isoformat()
+        }), 200
+    
     app_status['total_requests'] += 1
     
     try:
@@ -203,27 +212,30 @@ def webhook():
         if not ensure_bible_loaded():
             logger.error("웹훅: 성경 데이터 로드 실패")
             app_status['error_responses'] += 1
-            return jsonify(response_builder.create_error_response()), 500
+            return jsonify(response_builder.create_error_response()), 200  # 200으로 변경
+        
         # 요청 데이터 파싱
         request_data = request.get_json()
         
         if not request_data:
             logger.error("빈 요청 데이터")
             app_status['error_responses'] += 1
-            return jsonify(response_builder.create_error_response()), 400
+            return jsonify(response_builder.create_error_response()), 200  # 400에서 200으로 변경
+        
+        logger.info(f"수신된 요청 데이터: {json.dumps(request_data, ensure_ascii=False, indent=2)}")
         
         # 요청 유효성 검사
         if not request_parser.is_valid_request(request_data):
             logger.error("유효하지 않은 요청")
             app_status['error_responses'] += 1
-            return jsonify(response_builder.create_error_response()), 400
+            return jsonify(response_builder.create_error_response()), 200  # 400에서 200으로 변경
         
         # 사용자 정보 추출
         parsed_request = request_parser.parse_user_request(request_data)
         user_id = parsed_request['user_id']
         user_message = parsed_request['user_message']
         
-        logger.info(f"사용자 요청: {user_id[:8]}*** -> {user_message[:50]}...")
+        logger.info(f"사용자 요청: {user_id[:8]}*** -> {user_message}")
         
         # 메모리 상태 체크
         if MemoryManager.is_memory_critical():
@@ -232,6 +244,8 @@ def webhook():
         
         # 챗봇 응답 처리
         response = process_chatbot_request(user_id, user_message, parsed_request)
+        
+        logger.info(f"생성된 응답: {json.dumps(response, ensure_ascii=False, indent=2)}")
         
         app_status['successful_responses'] += 1
         return jsonify(response), 200
@@ -242,9 +256,9 @@ def webhook():
         
         app_status['error_responses'] += 1
         
-        # 에러 응답 반환
+        # 에러 응답 반환 (카카오톡은 항상 200으로 응답해야 함)
         error_response = response_builder.create_error_response()
-        return jsonify(error_response), 500
+        return jsonify(error_response), 200
 
 def process_chatbot_request(user_id: str, user_message: str, request_info: Dict) -> Dict[str, Any]:
     """
@@ -359,16 +373,21 @@ def handle_greeting(user_message: str) -> Dict:
 def handle_counseling_request(user_message: str, user_session) -> Dict:
     """상담 요청 처리"""
     try:
+        logger.info(f"상담 요청 처리 시작: {user_message}")
+        
         # 1. 고민 카테고리 분류
         categories = bible_manager.classify_concern(user_message)
         category_names = [cat[0] for cat in categories[:3] if cat[1] > 1.0]  # 높은 점수만
+        logger.info(f"분류된 카테고리: {category_names}")
         
         # 사용자 카테고리 업데이트
         if category_names:
             user_session.update_categories(category_names)
         
         # 2. 관련 성경 구절 검색
+        logger.info(f"성경 구절 검색 시작: {user_message}")
         bible_verses = bible_manager.search_verses(user_message, top_k=config.MAX_BIBLE_RESULTS)
+        logger.info(f"찾은 성경 구절 수: {len(bible_verses)}")
         
         if not bible_verses:
             # 인기 구절로 대체
@@ -381,15 +400,18 @@ def handle_counseling_request(user_message: str, user_session) -> Dict:
         verse_dicts = [verse.to_dict() for verse in bible_verses]
         conversation_history = user_session.get_recent_messages(4)
         
+        logger.info(f"Claude API 호출 시작 - 메시지: {user_message}")
         ai_response = claude_api.generate_counseling_response(
             user_message=user_message,
             bible_verses=verse_dicts,
             conversation_history=conversation_history,
             user_categories=category_names
         )
+        logger.info(f"Claude API 응답: {ai_response[:100] if ai_response else 'None'}...")
         
         if not ai_response:
             # AI 응답 실패시 기본 응답
+            logger.warning("Claude API 응답 실패 - 기본 응답 사용")
             ai_response = f"""🙏 {user_message}로 고민하고 계시는군요. 
 
 이런 상황에서 하나님의 말씀을 통해 위로를 받으시기 바랍니다. 모든 어려움 속에서도 하나님께서 함께하시며, 가장 좋은 길로 인도해 주실 것입니다.
@@ -397,11 +419,13 @@ def handle_counseling_request(user_message: str, user_session) -> Dict:
 기도와 함께 지혜를 구하시며, 필요하다면 믿을 만한 분들과 상의해 보시기 바랍니다."""
         
         # 4. 포맷된 응답 생성
+        logger.info("카카오톡 응답 포맷팅 시작")
         response = response_builder.create_counseling_response(
             ai_response=ai_response,
             bible_verses=verse_dicts,
             show_references=len(bible_verses) > 0
         )
+        logger.info(f"최종 응답 생성 완료: {len(str(response))} 바이트")
         
         return response
         

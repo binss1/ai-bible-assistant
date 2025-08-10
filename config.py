@@ -20,8 +20,8 @@ class Config:
     
     # Claude API 설정
     CLAUDE_API_KEY = os.getenv('CLAUDE_API_KEY')
-    CLAUDE_MODEL = os.getenv('CLAUDE_MODEL', 'claude-3-haiku-20240307')  # 가장 저렴한 모델
-    CLAUDE_MAX_TOKENS = int(os.getenv('CLAUDE_MAX_TOKENS', 800))
+    CLAUDE_MODEL = os.getenv('CLAUDE_MODEL', 'claude-3-5-sonnet-20241022')  # 더 나은 상담을 위한 모델
+    CLAUDE_MAX_TOKENS = int(os.getenv('CLAUDE_MAX_TOKENS', 1500))  # 더 긴 응답 가능
     CLAUDE_TEMPERATURE = float(os.getenv('CLAUDE_TEMPERATURE', 0.7))
     
     # MongoDB 설정
