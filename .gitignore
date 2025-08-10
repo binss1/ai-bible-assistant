@@ -84,11 +84,14 @@ personal/
 private/
 test_data/
 
-# 대용량 파일 (GitHub 제한) - 필수 파일은 예외
-# *.json.gz  # 주석 처리로 압축 파일 포함 허용
+# 대용량 성경 임베딩 파일들 (GitHub 파일 크기 제한)
+bible_embeddings.json
+bible_embeddings_*.json
+bible_embeddings_*.json.gz
+bible_embeddings_optimized.json.gz
+bible_embeddings_local.json.gz
 *.zip
 *.tar.gz
-bible_embeddings.json  # 원본 비압축 파일만 제외
 
 # 배포 관련
 .railway/
